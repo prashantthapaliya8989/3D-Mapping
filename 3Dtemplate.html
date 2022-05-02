@@ -1,0 +1,233 @@
+<html>
+  <head>
+    <title> Changunarayan 3D Mapping </title>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <link rel="stylesheet" type="text/css" href="css/example.css" />
+    <link rel="stylesheet" type="text/css" href="css/LoadingScreen.css" />
+
+    <!-- Import stylesheet for itowns Widgets plugin -->
+    <link rel="stylesheet" type="text/css" href="css/widgets.css" />
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.6/dat.gui.min.js"></script>
+  </head>
+  <body>
+    <!-- Add a description -->
+    <div id="description">
+      <p>Key bindings</p>
+      <ul>
+        <li>Left-Click: camera translation (drag)</li>
+        <li>Right-Click: camera translation (pan)</li>
+        <li>Ctrl + Left-Click: camera rotation (orbit)</li>
+        <li>Spacebar / Wheel-Click: smart zoom</li>
+        <li>Mouse Wheel: zoom in/out</li>
+        <li>T: orient camera to a top view</li>
+        <li>Y: move camera to start position</li>
+      </ul>
+      <br />
+      <p><b>Building Information</b></p>
+      <ul id="info"></ul>
+  </div>
+
+    <!-- Create a container for itowns viewer -->
+    <div id="viewerDiv"></div>
+
+    <!-- Import iTowns source code -->
+    <script src="itowns/dist/itowns.js"></script>
+    <script src="itowns/dist/debug.js"></script>
+
+    <!-- Import iTowns Widgets plugin -->
+    <script src="itowns/dist/itowns_widgets.js"></script>
+
+    <!-- Import iTowns LoadingScreen and GuiTools plugins -->
+    <script src="js/GUI/LoadingScreen.js"></script>
+    <script src="js/GUI/GuiTools.js"></script>
+    <script src="js/plugins/FeatureToolTip.js"></script>
+
+    <script type="text/javascript">
+            // ---------- CREATE A GlobeView FOR SUPPORTING DATA VISUALIZATION : ----------
+
+            // Define camera initial position
+            var placement = {
+              coord: new itowns.Coordinates(
+                "EPSG:4326", 85.43550665765139, 27.708162647900327
+              ),
+              range: 2500,
+              tilt: 75,
+            };
+
+            // `viewerDiv` contains iTowns' rendering area (`<canvas>`)
+            const viewerDiv = document.getElementById("viewerDiv");
+
+            // Create a GlobeView
+            const view = new itowns.GlobeView(viewerDiv, placement);
+
+            // Setup loading screen and debug menu
+            const debugMenu = new GuiTools("menuDiv", view);
+            var d = new debug.Debug(view, debugMenu.gui);
+
+            // ---------- DISPLAY CONTEXTUAL DATA : ----------
+
+            //OPENSTREETMAPs
+            // Create the source
+            const tmsSource = new itowns.TMSSource({
+              format: "image/png",
+              url: "https://tile.openstreetmap.org/${z}/${x}/${y}.png",
+              attribution: {
+                name: "OpenStreetMap",
+                url: "http://www.openstreetmap.org/",
+              },
+              crs: "EPSG:3857",
+              crossOrigin: null,
+            });
+
+            // Create the layer
+            const colorLayer = new itowns.ColorLayer("OSM", {
+              source: tmsSource,
+            });
+
+            // Add the layer
+            view.addLayer(colorLayer).then(debugMenu.addLayerGUI.bind(debugMenu));
+
+            //CHANGUORTHO
+            var changuFormat = new itowns.WMSSource({
+              url: "https://changuportal.naxa.com.np/geoserver/changu/wms",
+              version: "1.1.0",
+              name: "changu:changu_ortho",
+              crs: "EPSG:4326",
+              extent: {
+                west: "85.407560",
+                east: "85.525615",
+                south: "27.6535",
+                north: "27.73076",
+              },
+              format: "image/png",
+              transparent: true,
+            });
+            var changuLayer = new itowns.ColorLayer("Changu", {
+              updateStrategy: {
+                type: itowns.STRATEGY_DICHOTOMY,
+                zoom: { max: 20, min: 14 },
+              },
+              source: changuFormat,
+            });
+            view.addLayer(changuLayer).then(debugMenu.addLayerGUI.bind(debugMenu));
+
+            // Add a elevation layer. The layer's properties are defined in a json file.
+            function addElevationLayerFromConfig(config) {
+              config.source = new itowns.WMTSSource(config.source);
+              view
+                .addLayer(new itowns.ElevationLayer(config.id, config))
+                .then(debugMenu.addLayerGUI.bind(debugMenu));
+            }
+            itowns.Fetcher.json("layers/JSONLayers/WORLD_DTM.json").then(
+              addElevationLayerFromConfig
+            );
+
+
+            //BUILDING
+
+            //Define the altitude of base of building
+            function setAltitude(properties) {
+              return properties.RASTERVALU;
+            }
+            //Define the height of building
+            function setExtrusion(properties) {
+              return properties.height;
+            }
+            //Define the color of building on the basis of level of risk
+            function risk(properties) {
+              if (properties.Risk_lvl == 1) {
+                return "#FDFDFF";
+              } else if (properties.Risk_lvl == 2) {
+                return "#62929E";
+              } else {
+                return "#555555";
+              }
+            }           
+            //Building UPLOAD
+            var buildingSource = new itowns.FileSource({
+                url: 'https://raw.githubusercontent.com/prashantthapaliya8989/portfolio/master/building_geojson_qgis.geojson',
+                crs: 'EPSG:4326',
+                format: 'application/json',
+            });
+
+            var geometryLayer = new itowns.FeatureGeometryLayer("Buildings", {
+              source: buildingSource,
+              batchId: function (property, featureId) { return featureId; },
+              zoom: { min: 14 },
+              style: new itowns.Style({
+                
+                fill: {
+                  color: risk,
+                  base_altitude: setAltitude,
+                  extrusion_height: setExtrusion,
+                },
+              }),
+            });
+
+            view.addLayer(geometryLayer).then((layer) => {
+              const gui = debug.GeometryDebug.createGeometryDebugUI(
+                debugMenu.gui,
+                view,
+                layer
+              );
+              debug.GeometryDebug.addWireFrameCheckbox(gui, view, layer);
+            });
+
+            //Labelling the building
+
+            var buildingLabelStyle = new itowns.Style({
+                zoom: { min: 10, max: 20 },
+                text: {
+                    field: '{height}',
+                    haloColor: 'white',
+                    haloWidth: 1,
+                    transform: 'uppercase',
+                },
+                icon: {
+                    anchor: 'top',
+                },
+            });
+
+            var labelLayer = new itowns.ColorLayer('Kml2', {
+                source: buildingSource,
+                style: buildingLabelStyle,
+                addLabelLayer: true,
+            });
+
+            view.addLayer(labelLayer);
+
+            //Information of Building on MouseClick
+            function picking(event) {
+                var htmlInfo = document.getElementById('info');
+                var intersects = view.pickObjectsAt(event, 3, 'Buildings');
+                var properties;
+                var info;
+                var batchId;
+                htmlInfo.innerHTML = ' ';
+
+                if (intersects.length) {
+                    batchId = intersects[0].object.geometry.attributes.batchId.array[intersects[0].face.a];
+                    properties = intersects[0].object.feature.geometries[batchId].properties;
+                    Object.keys(properties).map(function (objectKey) {
+                        var value = properties[objectKey];
+                        if (value) {
+                            var key = objectKey.toString();
+                            if (key[0] !== '_' && key !== 'geometry_name') {
+                                info = value.toString();
+                                htmlInfo.innerHTML +='<li><b>' + key + ': </b>' + info + '</li>';
+                            }
+                        }
+                    });
+                    return properties;
+                }
+            }
+
+            window.addEventListener('mousedown', picking, false);
+
+    </script>
+  </body>
+</html>
